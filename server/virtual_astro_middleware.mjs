@@ -1,10 +1,10 @@
 globalThis.process ??= {};
 globalThis.process.env ??= {};
 import { d as defineMiddleware, s as sequence } from "./chunks/sequence_B081Vtkc.mjs";
-import { f as createDbClient, c as collections } from "./chunks/index_C8hkm3Ad.mjs";
-import { g as getAuthInstances } from "./chunks/auth_D3VEQItg.mjs";
-import { g as getValidatedMapping, i as identifyTarget } from "./chunks/domains_ac7gZBMj.mjs";
-import { g as getAdminPermissions } from "./chunks/rbac_8PPO8uBj.mjs";
+import { f as createDbClient, c as collections } from "./chunks/index_Bs1dLHcd.mjs";
+import { g as getAuthInstances } from "./chunks/auth_C9MZO_Gl.mjs";
+import { g as getValidatedMapping, i as identifyTarget } from "./chunks/domains_JCVeAtQW.mjs";
+import { getAdminPermissions } from "./chunks/rbac_ubixCz_c.mjs";
 const onRequest$1 = defineMiddleware(async (context, next) => {
   const { cookies, redirect, locals, url } = context;
   const hostname = url.hostname;
@@ -25,8 +25,10 @@ const onRequest$1 = defineMiddleware(async (context, next) => {
   let config = null;
   let target = "public";
   if (DB) {
-    config = await getValidatedMapping({ DB, NS_CONFIG });
-    target = identifyTarget(hostname, config);
+    const currentEnv = context.locals?.runtime?.env || context.locals?.env || {};
+    const envObj = { ...currentEnv, DB, NS_CONFIG };
+    config = await getValidatedMapping(envObj);
+    target = identifyTarget(hostname, config, envObj);
     console.log(`🌐 [Routing] Host: ${hostname}, Target: ${target}, ConfigAPI: ${config?.api_domain}`);
     locals.DB = DB;
     if (!locals.runtime) locals.runtime = {};
