@@ -34,28 +34,47 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
+async function fetchWithRetry(url, options, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) {
+        return res;
+      }
+      const errText = await res.text();
+      console.error(`Attempt ${i + 1} failed for ${url}: ${res.status} ${errText}`);
+      if (i === maxRetries - 1) throw new Error(`HTTP ${res.status}: ${errText}`);
+    } catch (err) {
+      console.error(`Attempt ${i + 1} network error for ${url}: ${err.message}`);
+      if (i === maxRetries - 1) throw err;
+    }
+    // Wait before retry (exponential backoff)
+    await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+  }
+}
+
 async function sendWebhook(status, log) {
   if (!webhook_url) return;
   try {
-    await fetch(webhook_url, {
+    await fetchWithRetry(webhook_url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${webhook_secret}` },
-      body: JSON.stringify({ deploy_id, status, log })
+      body: JSON.stringify({ deployId: deploy_id, status, log, currentStep: status === 'success' ? 6 : 3, totalSteps: 6, webhookSecret: webhook_secret })
     });
   } catch (err) {
-    console.error("Webhook failed:", err.message);
+    console.error("Webhook failed after retries:", err.message);
   }
 }
 
 async function getOrCreateD1(name) {
   // List
-  let res = await fetch(`${CF_API}/accounts/${cf_account_id}/d1/database`, { headers });
+  let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/d1/database`, { headers });
   let data = await res.json();
   let db = data.result?.find(d => d.name === name);
   if (db) return db.uuid;
   
   // Create
-  res = await fetch(`${CF_API}/accounts/${cf_account_id}/d1/database`, {
+  res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/d1/database`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ name })
@@ -66,12 +85,12 @@ async function getOrCreateD1(name) {
 }
 
 async function getOrCreateR2(name) {
-  let res = await fetch(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, { headers });
+  let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, { headers });
   let data = await res.json();
   let bucket = data.result?.find(b => b.name === name);
   if (bucket) return bucket.name;
 
-  res = await fetch(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, {
+  res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ name })
@@ -82,12 +101,12 @@ async function getOrCreateR2(name) {
 }
 
 async function getOrCreateKV(title) {
-  let res = await fetch(`${CF_API}/accounts/${cf_account_id}/storage/kv/namespaces`, { headers });
+  let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/storage/kv/namespaces`, { headers });
   let data = await res.json();
   let ns = data.result?.find(n => n.title === title);
   if (ns) return ns.id;
 
-  res = await fetch(`${CF_API}/accounts/${cf_account_id}/storage/kv/namespaces`, {
+  res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/storage/kv/namespaces`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ title })
