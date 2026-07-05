@@ -1,0 +1,1 @@
+globalThis.process??={};globalThis.process.env??={};const o={dialog:{base:{overlay:"z-[1200]",content:"z-[1210]"},nested:{overlay:"z-[1400]",content:"z-[1410]"}},workspace:{window:1300,handle:1310,cornerHandle:1311},page:{flyout:"z-[1100]",lightbox:"z-[1450]",toast:"z-[1500]"},local:{backdrop:"z-20",panel:"z-30"}};export{o as U};

@@ -1,0 +1,1 @@
+import{j as o}from"./jsx-dev-runtime._642itrj.js";import{c as m}from"./utils.DskCaDIh.js";globalThis.process??={};globalThis.process.env??={};function r({className:e,...s}){return o.jsxDEV("div",{className:m("animate-pulse rounded-md bg-muted",e),...s},void 0,!1,{fileName:"D:/ycz_me/cizhenyu/src/components/ui/Skeleton.tsx",lineNumber:9,columnNumber:5},this)}export{r as S};
