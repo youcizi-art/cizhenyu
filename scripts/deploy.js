@@ -88,8 +88,17 @@ async function getOrCreateR2(name) {
   let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, { headers });
   let data = await res.json();
   
-  // R2 API list response structure is different: data.result.buckets
-  let bucketList = Array.isArray(data.result) ? data.result : (data.result?.buckets || []);
+  // R2 API list response structure: data.result.buckets array OR data.result directly as an array.
+  // We should also handle the case where data.result is undefined.
+  let bucketList = [];
+  if (data && data.result) {
+    if (Array.isArray(data.result)) {
+      bucketList = data.result;
+    } else if (Array.isArray(data.result.buckets)) {
+      bucketList = data.result.buckets;
+    }
+  }
+  
   let bucket = bucketList.find(b => b.name === name);
   if (bucket) return bucket.name;
 
