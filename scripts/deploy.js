@@ -87,7 +87,10 @@ async function getOrCreateD1(name) {
 async function getOrCreateR2(name) {
   let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, { headers });
   let data = await res.json();
-  let bucket = data.result?.find(b => b.name === name);
+  
+  // R2 API list response structure is different: data.result.buckets
+  let bucketList = Array.isArray(data.result) ? data.result : (data.result?.buckets || []);
+  let bucket = bucketList.find(b => b.name === name);
   if (bucket) return bucket.name;
 
   res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/r2/buckets`, {
