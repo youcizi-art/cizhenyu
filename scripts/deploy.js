@@ -174,6 +174,54 @@ async function queryD1(databaseId, sqlText) {
   return data;
 }
 
+async function ensureCoreTables(databaseId) {
+  const statements = [
+    `
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        tenant_id INTEGER NOT NULL DEFAULT 1,
+        email TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        user_type TEXT NOT NULL DEFAULT 'member',
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at INTEGER NOT NULL
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS members (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'registered',
+        created_at INTEGER NOT NULL
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS oauth_bindings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        member_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_user_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    `,
+    `
+      CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        description TEXT,
+        updated_at INTEGER
+      )
+    `,
+    `
+      INSERT OR IGNORE INTO system_settings (key, value, description, updated_at)
+      VALUES ('site_name', '独立子站点', '站点名称', 1600000000000)
+    `
+  ];
+
+  for (const statement of statements) {
+    await queryD1(databaseId, statement);
+  }
+}
+
 async function seedSiteDomains(databaseId) {
   const siteDomains = {
     main_domain: normalizeHost(target_domain),
@@ -262,6 +310,7 @@ async function run() {
     const widgetNames = getTurnstileWidgetNames();
     const memberTurnstile = await ensureTurnstileWidget(widgetNames.member, allowedDomains);
     const adminTurnstile = await ensureTurnstileWidget(widgetNames.admin, allowedDomains);
+    await ensureCoreTables(d1_id);
     await seedSiteDomains(d1_id);
 
     // 2. Generate wrangler.toml
