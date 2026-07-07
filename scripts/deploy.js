@@ -43,6 +43,10 @@ function normalizeHost(value) {
     .split(':')[0];
 }
 
+function isUnsafeWebhookUrl(value) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(String(value || '').trim());
+}
+
 function collectAllowedDomains() {
   const domains = [
     normalizeHost(target_domain),
@@ -82,6 +86,10 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 
 async function sendWebhook(status, log) {
   if (!webhook_url) return;
+  if (isUnsafeWebhookUrl(webhook_url)) {
+    console.warn(`Skip webhook because callback url is unsafe for CI runner: ${webhook_url}`);
+    return;
+  }
   try {
     await fetchWithRetry(webhook_url, {
       method: 'POST',
@@ -192,6 +200,9 @@ async function ensureTurnstileWidget(name, domains) {
   let data = await res.json();
 
   if (!data.success) {
+    if (res.status === 403) {
+      throw new Error('Cloudflare Token 缺少 Turnstile/Challenges Widgets 管理权限，无法为子站自动创建验证组件。');
+    }
     throw new Error(`Turnstile List Error: ${JSON.stringify(data.errors)}`);
   }
 
@@ -209,6 +220,9 @@ async function ensureTurnstileWidget(name, domains) {
       body: JSON.stringify(payload)
     });
     data = await res.json();
+    if (res.status === 403) {
+      throw new Error('Cloudflare Token 缺少 Turnstile/Challenges Widgets 管理权限，无法更新子站验证组件。');
+    }
     if (!data.success) throw new Error(`Turnstile Update Error: ${JSON.stringify(data.errors)}`);
     return {
       siteKey: data.result?.sitekey || existing.sitekey,
@@ -222,6 +236,9 @@ async function ensureTurnstileWidget(name, domains) {
     body: JSON.stringify(payload)
   });
   data = await res.json();
+  if (res.status === 403) {
+    throw new Error('Cloudflare Token 缺少 Turnstile/Challenges Widgets 管理权限，无法创建子站验证组件。');
+  }
   if (!data.success) throw new Error(`Turnstile Create Error: ${JSON.stringify(data.errors)}`);
 
   return {
