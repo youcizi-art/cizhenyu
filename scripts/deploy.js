@@ -34,6 +34,8 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
+const runtimeBootstrapPath = path.join(__dirname, 'runtime-bootstrap.json');
+
 function normalizeHost(value) {
   return String(value || '')
     .trim()
@@ -64,6 +66,24 @@ function getTurnstileWidgetNames() {
     admin: `Admin Login site-${deploy_id}`
   };
 }
+
+function loadRuntimeBootstrap() {
+  if (!fs.existsSync(runtimeBootstrapPath)) {
+    throw new Error(`Missing runtime bootstrap artifact: ${runtimeBootstrapPath}`);
+  }
+
+  const parsed = JSON.parse(fs.readFileSync(runtimeBootstrapPath, 'utf8'));
+  const requiredKeys = ['essentials', 'reconcileCreates', 'reconcileAlters', 'reconcileSeeds', 'pluginCreates', 'pluginAlters', 'pluginSeeds'];
+  for (const key of requiredKeys) {
+    if (!Array.isArray(parsed[key])) {
+      throw new Error(`Invalid runtime bootstrap artifact: ${key} must be an array`);
+    }
+  }
+
+  return parsed;
+}
+
+const runtimeBootstrap = loadRuntimeBootstrap();
 
 async function fetchWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
@@ -174,52 +194,21 @@ async function queryD1(databaseId, sqlText) {
   return data;
 }
 
-async function ensureCoreTables(databaseId) {
-  const statements = [
-    `
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        tenant_id INTEGER NOT NULL DEFAULT 1,
-        email TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        user_type TEXT NOT NULL DEFAULT 'member',
-        status TEXT NOT NULL DEFAULT 'active',
-        created_at INTEGER NOT NULL
-      )
-    `,
-    `
-      CREATE TABLE IF NOT EXISTS members (
-        id TEXT PRIMARY KEY,
-        type TEXT NOT NULL DEFAULT 'registered',
-        created_at INTEGER NOT NULL
-      )
-    `,
-    `
-      CREATE TABLE IF NOT EXISTS oauth_bindings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        member_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        provider_user_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      )
-    `,
-    `
-      CREATE TABLE IF NOT EXISTS system_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        description TEXT,
-        updated_at INTEGER
-      )
-    `,
-    `
-      INSERT OR IGNORE INTO system_settings (key, value, description, updated_at)
-      VALUES ('site_name', '独立子站点', '站点名称', 1600000000000)
-    `
-  ];
-
+async function applySqlStatements(databaseId, statements) {
   for (const statement of statements) {
     await queryD1(databaseId, statement);
   }
+}
+
+async function applyRuntimeBootstrap(databaseId) {
+  console.log(`Applying runtime bootstrap version ${runtimeBootstrap.version || 'unknown'}...`);
+  await applySqlStatements(databaseId, runtimeBootstrap.essentials);
+  await applySqlStatements(databaseId, runtimeBootstrap.reconcileCreates);
+  await applySqlStatements(databaseId, runtimeBootstrap.reconcileAlters);
+  await applySqlStatements(databaseId, runtimeBootstrap.reconcileSeeds);
+  await applySqlStatements(databaseId, runtimeBootstrap.pluginCreates);
+  await applySqlStatements(databaseId, runtimeBootstrap.pluginAlters);
+  await applySqlStatements(databaseId, runtimeBootstrap.pluginSeeds);
 }
 
 async function seedSiteDomains(databaseId) {
@@ -310,7 +299,8 @@ async function run() {
     const widgetNames = getTurnstileWidgetNames();
     const memberTurnstile = await ensureTurnstileWidget(widgetNames.member, allowedDomains);
     const adminTurnstile = await ensureTurnstileWidget(widgetNames.admin, allowedDomains);
-    await ensureCoreTables(d1_id);
+    await sendWebhook('deploying', `Applying shared runtime bootstrap (${runtimeBootstrap.version || 'unknown'})...`);
+    await applyRuntimeBootstrap(d1_id);
     await seedSiteDomains(d1_id);
 
     // 2. Generate wrangler.toml
