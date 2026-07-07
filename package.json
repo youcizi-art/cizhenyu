@@ -7,16 +7,19 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "deploy": "node scripts/deploy.js"
   },
+  "dependencies": {
+    "wrangler": "4.84.1"
+  },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/youcizi-art/cizhenyu.git"
+    "url": "git+https://github.com/youcizi-art/cizhenyu_user.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/youcizi-art/cizhenyu/issues"
+    "url": "https://github.com/youcizi-art/cizhenyu_user/issues"
   },
-  "homepage": "https://github.com/youcizi-art/cizhenyu#readme"
+  "homepage": "https://github.com/youcizi-art/cizhenyu_user#readme"
 }

@@ -34,6 +34,33 @@ const headers = {
   'Content-Type': 'application/json'
 };
 
+function normalizeHost(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+    .split(':')[0];
+}
+
+function collectAllowedDomains() {
+  const domains = [
+    normalizeHost(target_domain),
+    normalizeHost(admin_domain),
+    normalizeHost(member_domain),
+    normalizeHost(image_domain),
+  ].filter(Boolean);
+
+  return Array.from(new Set(domains));
+}
+
+function getTurnstileWidgetNames() {
+  return {
+    member: `Member Login site-${deploy_id}`,
+    admin: `Admin Login site-${deploy_id}`
+  };
+}
+
 async function fetchWithRetry(url, options, maxRetries = 3) {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -128,6 +155,81 @@ async function getOrCreateKV(title) {
   return data.result.id;
 }
 
+async function queryD1(databaseId, sqlText) {
+  const res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/d1/database/${databaseId}/query`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ sql: sqlText })
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(`D1 Query Error: ${JSON.stringify(data.errors)}`);
+  return data;
+}
+
+async function seedSiteDomains(databaseId) {
+  const siteDomains = {
+    main_domain: normalizeHost(target_domain),
+    admin_domain: normalizeHost(admin_domain),
+    member_domain: normalizeHost(member_domain),
+    img_domain: normalizeHost(image_domain),
+    public_domains: []
+  };
+
+  const valueStr = JSON.stringify(siteDomains).replace(/'/g, "''");
+  const query = `
+    INSERT INTO system_settings (key, value, updated_at)
+    VALUES ('site_domains', '${valueStr}', strftime('%s','now') * 1000)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = excluded.updated_at
+  `;
+
+  await queryD1(databaseId, query);
+}
+
+async function ensureTurnstileWidget(name, domains) {
+  let res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/challenges/widgets`, { headers });
+  let data = await res.json();
+
+  if (!data.success) {
+    throw new Error(`Turnstile List Error: ${JSON.stringify(data.errors)}`);
+  }
+
+  const existing = data.result?.find(widget => widget.name === name);
+  const payload = {
+    name,
+    domains,
+    mode: 'managed'
+  };
+
+  if (existing) {
+    res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/challenges/widgets/${existing.sitekey}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    data = await res.json();
+    if (!data.success) throw new Error(`Turnstile Update Error: ${JSON.stringify(data.errors)}`);
+    return {
+      siteKey: data.result?.sitekey || existing.sitekey,
+      secretKey: data.result?.secret || existing.secret
+    };
+  }
+
+  res = await fetchWithRetry(`${CF_API}/accounts/${cf_account_id}/challenges/widgets`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload)
+  });
+  data = await res.json();
+  if (!data.success) throw new Error(`Turnstile Create Error: ${JSON.stringify(data.errors)}`);
+
+  return {
+    siteKey: data.result.sitekey,
+    secretKey: data.result.secret
+  };
+}
+
 async function run() {
   try {
     await sendWebhook('deploying', 'Starting deployment process in external engine...');
@@ -139,6 +241,11 @@ async function run() {
     const kv_rate_limiter = await getOrCreateKV(`site_${deploy_id}_rate_limiter`);
     const kv_config = await getOrCreateKV(`site_${deploy_id}_config`);
     const kv_session = await getOrCreateKV(`site_${deploy_id}_session`);
+    const allowedDomains = collectAllowedDomains();
+    const widgetNames = getTurnstileWidgetNames();
+    const memberTurnstile = await ensureTurnstileWidget(widgetNames.member, allowedDomains);
+    const adminTurnstile = await ensureTurnstileWidget(widgetNames.admin, allowedDomains);
+    await seedSiteDomains(d1_id);
 
     // 2. Generate wrangler.toml
     await sendWebhook('deploying', 'Generating wrangler.toml...');
@@ -146,9 +253,16 @@ async function run() {
 name = "site-${deploy_id}"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
+find_additional_modules = true
+base_dir = "server"
 main = "server/entry.mjs"
 
 assets = { directory = "client", binding = "ASSETS" }
+
+[[rules]]
+type = "ESModule"
+globs = ["./**/*.mjs"]
+fallthrough = true
 
 [[routes]]
 pattern = "${target_domain}"
@@ -162,9 +276,19 @@ custom_domain = true
 pattern = "${member_domain}"
 custom_domain = true
 
+[[routes]]
+pattern = "${image_domain}"
+custom_domain = true
+
 [vars]
 ENABLE_RUNTIME_SCHEMA_SYNC = "true"
 MEDIA_BUCKET_NAME = "${r2_bucket_name}"
+TURNSTILE_SITE_KEY = "${memberTurnstile.siteKey}"
+TURNSTILE_SECRET_KEY = "${memberTurnstile.secretKey}"
+TURNSTILE_ADMIN_SITE_KEY = "${adminTurnstile.siteKey}"
+TURNSTILE_ADMIN_SECRET_KEY = "${adminTurnstile.secretKey}"
+CF_ACCOUNT_ID = "${cf_account_id}"
+CF_API_TOKEN = "${cf_api_token}"
 DEFAULT_ADMIN_USER = "${default_admin_user}"
 DEFAULT_ADMIN_PASSWORD = "${default_admin_password}"
 ADMIN_VERIFICATION = "${admin_verification}"
@@ -197,10 +321,7 @@ id = "${kv_session}"
     await sendWebhook('deploying', 'Running wrangler deploy...');
     process.env.CLOUDFLARE_API_TOKEN = cf_api_token;
     process.env.CLOUDFLARE_ACCOUNT_ID = cf_account_id;
-    
-    // Install wrangler if not installed
-    execSync('npm install wrangler --no-save', { stdio: 'inherit', cwd: path.join(__dirname, '..') });
-    
+
     execSync('npx wrangler deploy', { stdio: 'inherit', cwd: path.join(__dirname, '..') });
 
     await sendWebhook('success', 'Deployment successful!');
